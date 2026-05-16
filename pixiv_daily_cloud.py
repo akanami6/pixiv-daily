@@ -171,18 +171,11 @@ def send_email(zip_path):
     msg.attach(part)
 
     with smtplib.SMTP("smtp.gmail.com", 587, timeout=30) as srv:
-        srv.set_debuglevel(0)
-        r1 = srv.ehlo()
-        logging.info(f"EHLO: {r1}")
-        r2 = srv.starttls()
-        logging.info(f"STARTTLS: {r2}")
-        r3 = srv.ehlo()
-        logging.info(f"EHLO2: {r3}")
-        r4 = srv.login(sender, pwd)
-        logging.info(f"LOGIN: {r4}")
-        result = srv.send_message(msg)
-        logging.info(f"SEND result: {result}")
-        srv.quit()
+        srv.ehlo()
+        srv.starttls()
+        srv.ehlo()
+        srv.login(sender, pwd)
+        srv.send_message(msg)
     logging.info(f"Email sent to {receiver}")
 
 
