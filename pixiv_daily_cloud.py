@@ -35,14 +35,12 @@ USER_AGENT = "DanbooruDaily/1.0 (GitHub Actions; automated fetching)"
 
 def fetch_posts():
     """Fetch posts from Danbooru API. No auth needed."""
-    params = {
-        "tags": f"{SEARCH_TAGS} score:>{MIN_SCORE} order:random",
-        "limit": 100,
-        "random": "true",
-    }
-    logging.info(f"Fetching: {SEARCH_TAGS}, score>{MIN_SCORE}")
-    r = requests.get(f"{API_BASE}/posts.json", params=params,
-                     headers={"User-Agent": USER_AGENT}, timeout=30)
+    from urllib.parse import quote
+    tag_string = f"{SEARCH_TAGS} score:>{MIN_SCORE} order:random"
+    # Build URL manually to avoid double-encoding of : and >
+    url = f"{API_BASE}/posts.json?tags={quote(tag_string)}&limit=100"
+    logging.info(f"Fetching: {tag_string}")
+    r = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=30)
     r.raise_for_status()
     posts = r.json()
     logging.info(f"Got {len(posts)} posts")
