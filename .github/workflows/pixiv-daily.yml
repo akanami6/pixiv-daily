@@ -6,7 +6,7 @@ on:
     - cron: "0 1 * * *"
   workflow_dispatch:  # allows manual trigger from GitHub UI
   push:
-    branches: [main]
+    branches: [master]
 
 jobs:
   pixiv-daily:
