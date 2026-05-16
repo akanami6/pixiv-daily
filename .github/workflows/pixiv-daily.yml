@@ -1,4 +1,4 @@
-name: Pixiv Daily — Anime Images to Email
+name: Pixiv Daily Anime Images to Email
 
 on:
   schedule:
