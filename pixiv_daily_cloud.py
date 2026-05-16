@@ -160,7 +160,7 @@ def send_email(zip_path):
     msg["To"] = receiver
     msg["Subject"] = f"[Pixiv Daily] {today} 二次元美少女图包"
 
-    body = f"今日({today}) Pixiv 日榜热门插画已打包，请查收附件。\n\n此邮件由 GitHub Actions 自动发送。"
+    body = f"今日({today}) Pixiv 日榜热门插画已打包，请查收附件。\n\n此邮件由 GitHub Actions 自动发送。\n\n如未收到附件，请在QQ邮箱中将 akanami666@gmail.com 加入白名单。"
     msg.attach(MIMEText(body, "plain", "utf-8"))
 
     with open(zip_path, "rb") as f:
