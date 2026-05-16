@@ -11,7 +11,7 @@ on:
 jobs:
   pixiv-daily:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
 
     steps:
       - name: Checkout
@@ -22,14 +22,16 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install dependencies
-        run: pip install pixivpy3
+      - name: Install Python dependencies
+        run: pip install playwright
+
+      - name: Install Chromium
+        run: playwright install chromium --with-deps
 
       - name: Run Pixiv Daily
         env:
           PIXIV_USERNAME: ${{ secrets.PIXIV_USERNAME }}
           PIXIV_PASSWORD: ${{ secrets.PIXIV_PASSWORD }}
-          PIXIV_REFRESH_TOKEN: ${{ secrets.PIXIV_REFRESH_TOKEN }}
           GMAIL_SENDER: ${{ secrets.GMAIL_SENDER }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           GMAIL_RECEIVER: ${{ secrets.GMAIL_RECEIVER }}

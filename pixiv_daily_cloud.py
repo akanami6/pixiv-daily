@@ -1,105 +1,144 @@
 #!/usr/bin/env python3
 """
-Pixiv Daily — cloud version (GitHub Actions).
-Reads credentials from environment variables instead of config file.
+Pixiv Daily — GitHub Actions cloud version.
+Uses Playwright headless browser to handle Pixiv's JavaScript login.
 """
 import os
 import sys
+import re
 import zipfile
 import logging
 import smtplib
 import time
-import io
 from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
 from email.mime.text import MIMEText
 from email import encoders
 from datetime import datetime
 
-from pixivpy3 import AppPixivAPI
-
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
 )
 
-SETTINGS = {
-    "image_count": 10,
-    "quality": "large",
-    "ranking_mode": "day",
-    "min_bookmarks": 100,
-    "search_tags": ["女の子", "オリジナル"],
-    "use_ranking": True,
-}
-
+IMAGE_COUNT = 10
 IMAGES_DIR = "/tmp/pixiv_images"
 
 
-def pixiv_login(api):
-    """Login — set proper API credentials then authenticate."""
-    # Use known-working Pixiv Android app OAuth credentials
-    api.set_api(
-        host="https://app-api.pixiv.net",
-        client_id="MOBrBDS8blbauoSck0ZfDbtuzpyT",
-        client_secret="lsACyCD94FhDUtGTXi3QzcFE2uU1hqtDaKeqrdwj",
-    )
-
-    token = os.environ.get("PIXIV_REFRESH_TOKEN", "")
-    if token:
-        try:
-            api.auth(refresh_token=token)
-            logging.info("Logged in via refresh token")
-            return
-        except Exception as e:
-            logging.warning(f"Refresh token failed: {e}")
+def login_and_get_images():
+    """Use Playwright to login and fetch ranking image URLs."""
+    from playwright.sync_api import sync_playwright
 
     username = os.environ["PIXIV_USERNAME"]
     password = os.environ["PIXIV_PASSWORD"]
-    resp = api.login(username, password)
-    new_token = resp.get("refresh_token", "")
-    if new_token and new_token != token:
-        logging.info(f"New refresh token obtained: {new_token[:8]}...{new_token[-8:]}")
-        logging.info("Update PIXIV_REFRESH_TOKEN secret with this value for faster login")
 
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        context = browser.new_context(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+            locale="zh-CN",
+        )
+        page = context.new_page()
 
-def fetch_illustrations(api):
-    ids = []
-    resp = api.illust_ranking(mode=SETTINGS["ranking_mode"])
-    for item in resp.get("illusts", []):
-        if len(ids) >= SETTINGS["image_count"] * 3:
-            break
-        if item.get("total_bookmarks", 0) >= SETTINGS["min_bookmarks"]:
-            ids.append(item["id"])
-    logging.info(f"Got {len(ids)} illust IDs from ranking")
-    return ids
+        # Step 1: Go to login page
+        logging.info("Opening Pixiv login page...")
+        page.goto("https://accounts.pixiv.net/login?lang=zh&source=pc&view_type=page", wait_until="domcontentloaded")
+        page.wait_for_timeout(2000)
 
+        # Accept privacy notice if present
+        ok_btn = page.query_selector('button:has-text("OK")')
+        if ok_btn and ok_btn.is_visible():
+            ok_btn.click()
+            page.wait_for_timeout(500)
 
-def download_images(api, illust_ids):
-    os.makedirs(IMAGES_DIR, exist_ok=True)
-    quality = SETTINGS["quality"]
-    max_count = SETTINGS["image_count"]
-    downloaded = []
+        # Fill login form
+        logging.info("Filling login form...")
+        page.fill('input[placeholder*="邮箱"], input[placeholder*="pixiv ID"], input[placeholder*="メールアドレス"]', username)
+        page.fill('input[placeholder*="密码"], input[placeholder*="パスワード"]', password)
+        page.wait_for_timeout(500)
 
-    for iid in illust_ids:
-        if len(downloaded) >= max_count:
-            break
+        # Click login button
+        login_btn = page.query_selector('button:has-text("登录"), button:has-text("ログイン")')
+        if login_btn and login_btn.is_enabled():
+            login_btn.click()
+        else:
+            # Press Enter in the password field
+            page.keyboard.press("Enter")
+
+        page.wait_for_timeout(3000)
+        logging.info(f"After login URL: {page.url}")
+
+        # Step 2: Get ranking JSON
+        logging.info("Fetching ranking data...")
+        page.goto("https://www.pixiv.net/ranking.php?mode=daily&format=json", wait_until="domcontentloaded")
+        page.wait_for_timeout(2000)
+
+        body_text = page.evaluate("() => document.body.innerText")
+        import json
         try:
-            detail = api.illust_detail(iid)
-            illust = detail["illust"]
-            url = illust["image_urls"].get(quality, illust["image_urls"]["large"])
-            ext = url.split(".")[-1].split("?")[0]
-            fname = f"{iid}.{ext}"
-            fpath = os.path.join(IMAGES_DIR, fname)
-            api.download(url, path=IMAGES_DIR, fname=fname)
-            downloaded.append(fpath)
-            logging.info(f"Downloaded: {fname}")
-            time.sleep(0.5)
-        except Exception as e:
-            logging.warning(f"Download illust {iid} failed: {e}")
-            continue
+            data = json.loads(body_text)
+        except json.JSONDecodeError:
+            logging.error(f"Failed to parse ranking JSON: {body_text[:500]}")
+            browser.close()
+            return []
 
-    logging.info(f"Downloaded {len(downloaded)} images total")
-    return downloaded
+        contents = data.get("contents", [])
+        logging.info(f"Got {len(contents)} ranking entries")
+
+        # Step 3: Build image URL list
+        image_urls = []
+        for item in contents:
+            if len(image_urls) >= IMAGE_COUNT:
+                break
+            if item.get("illust_type") != "0":
+                continue
+            thumb = item["url"]
+            full = re.sub(r"/c/\d+x\d+/", "/", thumb)
+            image_urls.append({
+                "url": full,
+                "illust_id": item["illust_id"],
+                "title": item.get("title", ""),
+                "author": item.get("user_name", "unknown"),
+            })
+
+        # Step 4: Download images via page (to reuse auth cookies)
+        logging.info(f"Downloading {len(image_urls)} images...")
+        os.makedirs(IMAGES_DIR, exist_ok=True)
+        downloaded = []
+
+        for img in image_urls:
+            fname = f"{img['illust_id']}.{img['url'].split('.')[-1].split('?')[0]}"
+            fpath = os.path.join(IMAGES_DIR, fname)
+            try:
+                response = page.evaluate("""
+                    async ([url, fname]) => {
+                        const resp = await fetch(url, {
+                            headers: { 'Referer': 'https://www.pixiv.net/' }
+                        });
+                        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+                        const blob = await resp.blob();
+                        const reader = new FileReader();
+                        return new Promise((resolve, reject) => {
+                            reader.onload = () => resolve(reader.result);
+                            reader.onerror = reject;
+                            reader.readAsDataURL(blob);
+                        });
+                    }
+                """, [img["url"], fname])
+                # Decode base64 data URL
+                import base64
+                b64_data = response.split(",", 1)[1]
+                with open(fpath, "wb") as f:
+                    f.write(base64.b64decode(b64_data))
+                downloaded.append(fpath)
+                logging.info(f"Downloaded: {fname} (by {img['author']})")
+                time.sleep(0.3)
+            except Exception as e:
+                logging.warning(f"Download {img['illust_id']} failed: {e}")
+
+        browser.close()
+        logging.info(f"Downloaded {len(downloaded)} images total")
+        return downloaded
 
 
 def create_zip(files):
@@ -116,7 +155,7 @@ def create_zip(files):
 
 def send_email(zip_path):
     sender = os.environ["GMAIL_SENDER"]
-    password = os.environ["GMAIL_APP_PASSWORD"]
+    pwd = os.environ["GMAIL_APP_PASSWORD"]
     receiver = os.environ.get("GMAIL_RECEIVER", sender)
     today = datetime.now().strftime("%Y年%m月%d日")
 
@@ -125,7 +164,7 @@ def send_email(zip_path):
     msg["To"] = receiver
     msg["Subject"] = f"[Pixiv Daily] {today} 二次元美少女图包"
 
-    body = f"今日({today}) Pixiv 热门二次元美少女图片已打包，请查收附件。\n\n此邮件由 GitHub Actions 自动发送，无需回复。"
+    body = f"今日({today}) Pixiv 日榜热门插画已打包，请查收附件。\n\n此邮件由 GitHub Actions 自动发送。"
     msg.attach(MIMEText(body, "plain", "utf-8"))
 
     with open(zip_path, "rb") as f:
@@ -139,25 +178,17 @@ def send_email(zip_path):
         srv.ehlo()
         srv.starttls()
         srv.ehlo()
-        srv.login(sender, password)
+        srv.login(sender, pwd)
         srv.send_message(msg)
     logging.info(f"Email sent to {receiver}")
 
 
 def main():
     logging.info("=" * 50)
-    logging.info("Pixiv Daily (cloud) starting")
-
-    api = AppPixivAPI()
+    logging.info("Pixiv Daily (cloud v3 - Playwright) starting")
 
     try:
-        pixiv_login(api)
-        illust_ids = fetch_illustrations(api)
-        if not illust_ids:
-            logging.error("No illustrations found")
-            sys.exit(1)
-
-        files = download_images(api, illust_ids)
+        files = login_and_get_images()
         if not files:
             logging.error("No images downloaded")
             sys.exit(1)
