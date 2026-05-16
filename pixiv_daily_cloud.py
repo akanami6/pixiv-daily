@@ -27,14 +27,20 @@ logging.basicConfig(
 
 IMAGE_COUNT = 10
 IMAGES_DIR = "/tmp/pixiv_images"
+SEARCH_TAGS = os.environ.get("SEARCH_TAGS", "巨乳 美少女")
+SEARCH_ORDER = os.environ.get("SEARCH_ORDER", "popular_d")  # popular_d or date_d
+SEARCH_MODE = os.environ.get("SEARCH_MODE", "all")  # all, safe, r18
 
 
 def login_and_get_image_list():
-    """Use Playwright to login to Pixiv and fetch ranking image URLs + cookies."""
+    """Use Playwright to login to Pixiv and search images by tags."""
     from playwright.sync_api import sync_playwright
+    from urllib.parse import quote
 
     username = os.environ["PIXIV_USERNAME"]
     password = os.environ["PIXIV_PASSWORD"]
+    tags = SEARCH_TAGS
+    encoded = quote(tags)
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
@@ -67,38 +73,71 @@ def login_and_get_image_list():
         page.wait_for_timeout(3000)
         logging.info(f"After login URL: {page.url}")
 
-        # Step 2: Get ranking data
-        logging.info("Fetching ranking...")
-        page.goto("https://www.pixiv.net/ranking.php?mode=daily&format=json", wait_until="domcontentloaded")
+        # Step 2: Search by tags using Pixiv Ajax API
+        search_url = (
+            f"https://www.pixiv.net/ajax/search/illustrations/{encoded}"
+            f"?word={encoded}&order={SEARCH_ORDER}&mode={SEARCH_MODE}"
+            f"&p=1&s_mode=s_tag_full&type=illust&lang=zh"
+        )
+        logging.info(f"Searching with tags: {tags}")
+        logging.info(f"Search URL: {search_url}")
+        page.goto(search_url, wait_until="domcontentloaded")
         page.wait_for_timeout(2000)
 
         body = page.evaluate("() => document.body.innerText")
         data = json.loads(body)
-        contents = data.get("contents", [])
-        logging.info(f"Got {len(contents)} ranking entries")
+        if data.get("error"):
+            logging.error(f"Search API error: {data}")
+            return [], []
 
-        # Step 3: Build image list
+        illust_data = data.get("body", {}).get("illust", {}).get("data", [])
+        logging.info(f"Search returned {len(illust_data)} results")
+
+        # Step 3: Build image URL list (filter illustrations only)
         image_urls = []
-        for item in contents:
+        seen_ids = set()
+        for item in illust_data:
             if len(image_urls) >= IMAGE_COUNT:
                 break
-            if item.get("illust_type") != "0":
+            if item.get("illustType") != 0:  # 0 = illustration, skip manga/ugoira
                 continue
+            iid = item["id"]
+            if iid in seen_ids:
+                continue
+            seen_ids.add(iid)
+
             thumb = item["url"]
-            full = re.sub(r"/c/\d+x\d+/", "/", thumb)
-            image_urls.append({
-                "url": full,
-                "illust_id": item["illust_id"],
-                "title": item.get("title", ""),
-                "author": item.get("user_name", "unknown"),
-            })
+            # thumbnail: /c/250x250_80_a2/img-master/.../xxx_p0_square1200.jpg
+            # full:      /img-master/.../xxx_p0_master1200.jpg
+            full = re.sub(r"/c/\d+x\d+.*?/img-master/", "/img-master/", thumb)
+            full = re.sub(r"_square1200", "_master1200", full)
+
+            page_count = item.get("pageCount", 1)
+            if page_count > 1:
+                for p in range(min(page_count, 3)):  # max 3 pages per work
+                    if len(image_urls) >= IMAGE_COUNT:
+                        break
+                    page_url = re.sub(r"_p0_", f"_p{p}_", full)
+                    image_urls.append({
+                        "url": page_url,
+                        "illust_id": iid,
+                        "title": item.get("title", ""),
+                        "author": item.get("userName", "unknown"),
+                    })
+            else:
+                image_urls.append({
+                    "url": full,
+                    "illust_id": iid,
+                    "title": item.get("title", ""),
+                    "author": item.get("userName", "unknown"),
+                })
 
         # Step 4: Export cookies for requests-based download
         cookies = context.cookies()
         browser.close()
 
         logging.info(f"Collected {len(image_urls)} image URLs and {len(cookies)} cookies")
-        return image_urls, cookies
+        return image_urls, cookies, tags
 
 
 def download_images(image_urls, cookies):
@@ -149,7 +188,7 @@ def create_zip(files):
     return zip_path
 
 
-def send_email(zip_path):
+def send_email(zip_path, tags):
     sender = os.environ["GMAIL_SENDER"].encode("ascii", errors="ignore").decode()
     pwd = os.environ["GMAIL_APP_PASSWORD"].encode("ascii", errors="ignore").decode()
     receiver = os.environ.get("GMAIL_RECEIVER", sender).encode("ascii", errors="ignore").decode()
@@ -158,9 +197,9 @@ def send_email(zip_path):
     msg = MIMEMultipart(policy=email.policy.SMTP)
     msg["From"] = sender
     msg["To"] = receiver
-    msg["Subject"] = f"[Pixiv Daily] {today} 二次元美少女图包"
+    msg["Subject"] = f"[Pixiv Daily] {today} {tags} 图包"
 
-    body = f"今日({today}) Pixiv 日榜热门插画已打包，请查收附件。\n\n此邮件由 GitHub Actions 自动发送。\n\n如未收到附件，请在QQ邮箱中将 akanami666@gmail.com 加入白名单。"
+    body = f"今日({today}) Pixiv 标签搜索「{tags}」热门插画已打包，请查收附件。\n\n此邮件由 GitHub Actions 自动发送。"
     msg.attach(MIMEText(body, "plain", "utf-8"))
 
     with open(zip_path, "rb") as f:
@@ -184,7 +223,7 @@ def main():
     logging.info("Pixiv Daily (cloud v4 - Playwright + requests) starting")
 
     try:
-        image_urls, cookies = login_and_get_image_list()
+        image_urls, cookies, tags = login_and_get_image_list()
         if not image_urls:
             logging.error("No image URLs collected")
             sys.exit(1)
@@ -195,7 +234,7 @@ def main():
             sys.exit(1)
 
         zip_path = create_zip(files)
-        send_email(zip_path)
+        send_email(zip_path, tags)
         logging.info("Pixiv Daily finished successfully")
     except Exception as e:
         logging.error(f"Fatal error: {e}")
