@@ -34,21 +34,28 @@ USER_AGENT = "AnimeDaily/1.0 (GitHub Actions)"
 
 
 def fetch_posts():
-    """Fetch from Konachan first, fallback to Danbooru."""
+    """Fetch from yande.re or konachan (no auth needed)."""
     tag_string = f"{SEARCH_TAGS} order:random"
-    url = f"https://konachan.com/post.json?tags={quote(tag_string)}&limit={IMAGE_COUNT*3}"
+    limit = IMAGE_COUNT * 3
 
-    logging.info(f"Fetching Konachan: {tag_string}")
-    r = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=30)
+    # Try yande.re first
+    url = f"https://yande.re/post.json?tags={quote(tag_string)}&limit={limit}"
+    logging.info(f"Trying yande.re: {tag_string}")
+    r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=30)
 
     if r.status_code != 200:
-        logging.warning(f"Konachan failed ({r.status_code}), trying Danbooru...")
-        url = f"https://danbooru.donmai.us/posts.json?tags={quote(tag_string)}&limit={IMAGE_COUNT*3}"
-        r = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=30)
-        r.raise_for_status()
+        logging.warning(f"yande.re: {r.status_code}, trying konachan.net...")
+        url = f"https://konachan.net/post.json?tags={quote(tag_string)}&limit={limit}"
+        r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=30)
 
+    if r.status_code != 200:
+        logging.warning(f"konachan.net: {r.status_code}, trying lolibooru...")
+        url = f"https://lolibooru.moe/post.json?tags={quote(tag_string)}&limit={limit}"
+        r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=30)
+
+    r.raise_for_status()
     posts = r.json()
-    logging.info(f"Got {len(posts)} posts")
+    logging.info(f"Got {len(posts)} posts from {r.url}")
     return posts
 
 
@@ -63,8 +70,8 @@ def download_images(posts):
         if len(downloaded) >= IMAGE_COUNT:
             break
 
-        # Konachan uses 'file_url' or 'jpeg_url', Danbooru uses 'large_file_url'/'file_url'
-        url = (post.get("file_url") or post.get("jpeg_url") or
+        # Booru sites: yande.re/konachan use file_url/sample_url, danbooru uses large_file_url
+        url = (post.get("sample_url") or post.get("file_url") or post.get("jpeg_url") or
                post.get("large_file_url") or "")
         if not url:
             continue
