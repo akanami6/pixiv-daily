@@ -36,7 +36,14 @@ IMAGES_DIR = "/tmp/pixiv_images"
 
 
 def pixiv_login(api):
-    """Login — try refresh token first, then password."""
+    """Login — set proper API credentials then authenticate."""
+    # Use known-working Pixiv Android app OAuth credentials
+    api.set_api(
+        host="https://app-api.pixiv.net",
+        client_id="MOBrBDS8blbauoSck0ZfDbtuzpyT",
+        client_secret="lsACyCD94FhDUtGTXi3QzcFE2uU1hqtDaKeqrdwj",
+    )
+
     token = os.environ.get("PIXIV_REFRESH_TOKEN", "")
     if token:
         try:

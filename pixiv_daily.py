@@ -49,6 +49,13 @@ def load_config():
 
 def pixiv_login(api, cfg):
     """Login via refresh token or username/password, cache token."""
+    # Use known-working Pixiv Android app OAuth credentials
+    api.set_api(
+        host="https://app-api.pixiv.net",
+        client_id="MOBrBDS8blbauoSck0ZfDbtuzpyT",
+        client_secret="lsACyCD94FhDUtGTXi3QzcFE2uU1hqtDaKeqrdwj",
+    )
+
     token = cfg["pixiv"].get("refresh_token", "")
     if token:
         try:
