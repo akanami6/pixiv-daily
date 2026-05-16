@@ -36,7 +36,7 @@ USER_AGENT = "DanbooruDaily/1.0 (GitHub Actions; automated fetching)"
 def fetch_posts():
     """Fetch posts from Danbooru API. No auth needed."""
     from urllib.parse import quote
-    tag_string = f"{SEARCH_TAGS} score:>{MIN_SCORE} order:random"
+    tag_string = f"{SEARCH_TAGS} order:random"
     # Build URL manually to avoid double-encoding of : and >
     url = f"{API_BASE}/posts.json?tags={quote(tag_string)}&limit=100"
     logging.info(f"Fetching: {tag_string}")
