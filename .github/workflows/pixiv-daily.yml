@@ -23,7 +23,7 @@ jobs:
           python-version: "3.11"
 
       - name: Install Python dependencies
-        run: pip install playwright
+        run: pip install playwright requests
 
       - name: Install Chromium
         run: playwright install chromium --with-deps
