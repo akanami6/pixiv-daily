@@ -35,7 +35,7 @@ jobs:
           GMAIL_SENDER: ${{ secrets.GMAIL_SENDER }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           GMAIL_RECEIVER: ${{ secrets.GMAIL_RECEIVER }}
-          SEARCH_TAGS: "巨乳 美少女"
+          SEARCH_TAGS: "巨乳 美少女 R-18"
           SEARCH_ORDER: "popular_d"
-          SEARCH_MODE: "all"
+          SEARCH_MODE: "r18"
         run: python pixiv_daily_cloud.py
