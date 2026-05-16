@@ -7,6 +7,7 @@ import os
 import sys
 import re
 import json
+import random
 import zipfile
 import logging
 import smtplib
@@ -73,30 +74,37 @@ def login_and_get_image_list():
         page.wait_for_timeout(3000)
         logging.info(f"After login URL: {page.url}")
 
-        # Step 2: Search by tags using Pixiv Ajax API
-        search_url = (
-            f"https://www.pixiv.net/ajax/search/illustrations/{encoded}"
-            f"?word={encoded}&order={SEARCH_ORDER}&mode={SEARCH_MODE}"
-            f"&p=1&s_mode=s_tag_full&type=illust&lang=zh"
-        )
-        logging.info(f"Searching with tags: {tags}")
-        logging.info(f"Search URL: {search_url}")
-        page.goto(search_url, wait_until="domcontentloaded")
-        page.wait_for_timeout(2000)
+        # Step 2: Fetch multiple pages of search results, then shuffle
+        all_illusts = []
+        for page in range(1, 4):  # fetch 3 pages × 60 = ~180 candidates
+            search_url = (
+                f"https://www.pixiv.net/ajax/search/illustrations/{encoded}"
+                f"?word={encoded}&order={SEARCH_ORDER}&mode={SEARCH_MODE}"
+                f"&p={page}&s_mode=s_tag_full&type=illust&lang=zh"
+            )
+            logging.info(f"Searching page {page}: {tags}")
+            page.goto(search_url, wait_until="domcontentloaded")
+            page.wait_for_timeout(1500)
 
-        body = page.evaluate("() => document.body.innerText")
-        data = json.loads(body)
-        if data.get("error"):
-            logging.error(f"Search API error: {data}")
-            return [], []
+            body = page.evaluate("() => document.body.innerText")
+            data = json.loads(body)
+            if data.get("error"):
+                logging.warning(f"Search page {page} error: {data}")
+                break
+            page_data = data.get("body", {}).get("illust", {}).get("data", [])
+            if not page_data:
+                break
+            all_illusts.extend(page_data)
+            logging.info(f"  Page {page}: {len(page_data)} results (total: {len(all_illusts)})")
 
-        illust_data = data.get("body", {}).get("illust", {}).get("data", [])
-        logging.info(f"Search returned {len(illust_data)} results")
+        logging.info(f"Total search results: {len(all_illusts)}")
+        # Random shuffle for variety
+        random.shuffle(all_illusts)
 
-        # Step 3: Build image URL list (filter illustrations only)
+        # Step 3: Build image URL list from shuffled results
         image_urls = []
         seen_ids = set()
-        for item in illust_data:
+        for item in all_illusts:
             if len(image_urls) >= IMAGE_COUNT:
                 break
             if item.get("illustType") != 0:  # 0 = illustration, skip manga/ugoira
