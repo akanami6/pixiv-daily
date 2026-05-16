@@ -31,7 +31,7 @@ IMAGES_DIR = "/tmp/anime_images"
 # Two tag sets: 5 images each
 TAG_SETS = [
     ("large_breasts", 5, "巨乳大姐姐"),
-    ("barefoot", 5, "美足"),
+    ("feet", 5, "美足"),
 ]
 USER_AGENT = "AnimeDaily/1.0 (GitHub Actions)"
 
