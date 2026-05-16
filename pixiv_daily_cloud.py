@@ -35,8 +35,8 @@ USER_AGENT = "AnimeDaily/1.0 (GitHub Actions)"
 
 def fetch_posts():
     """Fetch from yande.re or konachan (no auth needed)."""
-    tag_string = f"{SEARCH_TAGS} order:random"
-    limit = IMAGE_COUNT * 3
+    tag_string = SEARCH_TAGS
+    limit = 100  # fetch more, then random select
 
     # Try yande.re first
     url = f"https://yande.re/post.json?tags={quote(tag_string)}&limit={limit}"
@@ -55,7 +55,8 @@ def fetch_posts():
 
     r.raise_for_status()
     posts = r.json()
-    logging.info(f"Got {len(posts)} posts from {r.url}")
+    random.shuffle(posts)
+    logging.info(f"Got {len(posts)} posts from {r.url}, shuffled")
     return posts
 
 
