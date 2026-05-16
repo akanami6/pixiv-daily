@@ -1,4 +1,4 @@
-name: Danbooru Daily Anime Images to Email
+name: Anime Daily Images to Email
 
 on:
   schedule:
