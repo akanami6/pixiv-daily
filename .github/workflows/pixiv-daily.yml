@@ -1,0 +1,36 @@
+name: Pixiv Daily — Anime Images to Email
+
+on:
+  schedule:
+    # Runs every day at 01:00 UTC (09:00 Beijing time)
+    - cron: "0 1 * * *"
+  workflow_dispatch:  # allows manual trigger from GitHub UI
+  push:
+    branches: [main]
+
+jobs:
+  pixiv-daily:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install pixivpy3
+
+      - name: Run Pixiv Daily
+        env:
+          PIXIV_USERNAME: ${{ secrets.PIXIV_USERNAME }}
+          PIXIV_PASSWORD: ${{ secrets.PIXIV_PASSWORD }}
+          PIXIV_REFRESH_TOKEN: ${{ secrets.PIXIV_REFRESH_TOKEN }}
+          GMAIL_SENDER: ${{ secrets.GMAIL_SENDER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          GMAIL_RECEIVER: ${{ secrets.GMAIL_RECEIVER }}
+        run: python pixiv_daily_cloud.py
