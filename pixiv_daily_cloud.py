@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
 Pixiv Daily — GitHub Actions cloud version.
-Uses Playwright headless browser to handle Pixiv's JavaScript login.
+Playwright for JS login, requests for cookie-based image download.
 """
 import os
 import sys
 import re
+import json
 import zipfile
 import logging
 import smtplib
@@ -16,6 +17,8 @@ from email.mime.text import MIMEText
 from email import encoders
 from datetime import datetime
 
+import requests
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -25,8 +28,8 @@ IMAGE_COUNT = 10
 IMAGES_DIR = "/tmp/pixiv_images"
 
 
-def login_and_get_images():
-    """Use Playwright to login and fetch ranking image URLs."""
+def login_and_get_image_list():
+    """Use Playwright to login to Pixiv and fetch ranking image URLs + cookies."""
     from playwright.sync_api import sync_playwright
 
     username = os.environ["PIXIV_USERNAME"]
@@ -40,52 +43,40 @@ def login_and_get_images():
         )
         page = context.new_page()
 
-        # Step 1: Go to login page
+        # Step 1: Login
         logging.info("Opening Pixiv login page...")
         page.goto("https://accounts.pixiv.net/login?lang=zh&source=pc&view_type=page", wait_until="domcontentloaded")
         page.wait_for_timeout(2000)
 
-        # Accept privacy notice if present
         ok_btn = page.query_selector('button:has-text("OK")')
         if ok_btn and ok_btn.is_visible():
             ok_btn.click()
             page.wait_for_timeout(500)
 
-        # Fill login form
         logging.info("Filling login form...")
         page.fill('input[placeholder*="邮箱"], input[placeholder*="pixiv ID"], input[placeholder*="メールアドレス"]', username)
         page.fill('input[placeholder*="密码"], input[placeholder*="パスワード"]', password)
         page.wait_for_timeout(500)
 
-        # Click login button
         login_btn = page.query_selector('button:has-text("登录"), button:has-text("ログイン")')
         if login_btn and login_btn.is_enabled():
             login_btn.click()
         else:
-            # Press Enter in the password field
             page.keyboard.press("Enter")
-
         page.wait_for_timeout(3000)
         logging.info(f"After login URL: {page.url}")
 
-        # Step 2: Get ranking JSON
-        logging.info("Fetching ranking data...")
+        # Step 2: Get ranking data
+        logging.info("Fetching ranking...")
         page.goto("https://www.pixiv.net/ranking.php?mode=daily&format=json", wait_until="domcontentloaded")
         page.wait_for_timeout(2000)
 
-        body_text = page.evaluate("() => document.body.innerText")
-        import json
-        try:
-            data = json.loads(body_text)
-        except json.JSONDecodeError:
-            logging.error(f"Failed to parse ranking JSON: {body_text[:500]}")
-            browser.close()
-            return []
-
+        body = page.evaluate("() => document.body.innerText")
+        data = json.loads(body)
         contents = data.get("contents", [])
         logging.info(f"Got {len(contents)} ranking entries")
 
-        # Step 3: Build image URL list
+        # Step 3: Build image list
         image_urls = []
         for item in contents:
             if len(image_urls) >= IMAGE_COUNT:
@@ -101,44 +92,48 @@ def login_and_get_images():
                 "author": item.get("user_name", "unknown"),
             })
 
-        # Step 4: Download images via page (to reuse auth cookies)
-        logging.info(f"Downloading {len(image_urls)} images...")
-        os.makedirs(IMAGES_DIR, exist_ok=True)
-        downloaded = []
-
-        for img in image_urls:
-            fname = f"{img['illust_id']}.{img['url'].split('.')[-1].split('?')[0]}"
-            fpath = os.path.join(IMAGES_DIR, fname)
-            try:
-                response = page.evaluate("""
-                    async ([url, fname]) => {
-                        const resp = await fetch(url, {
-                            headers: { 'Referer': 'https://www.pixiv.net/' }
-                        });
-                        if (!resp.ok) throw new Error('HTTP ' + resp.status);
-                        const blob = await resp.blob();
-                        const reader = new FileReader();
-                        return new Promise((resolve, reject) => {
-                            reader.onload = () => resolve(reader.result);
-                            reader.onerror = reject;
-                            reader.readAsDataURL(blob);
-                        });
-                    }
-                """, [img["url"], fname])
-                # Decode base64 data URL
-                import base64
-                b64_data = response.split(",", 1)[1]
-                with open(fpath, "wb") as f:
-                    f.write(base64.b64decode(b64_data))
-                downloaded.append(fpath)
-                logging.info(f"Downloaded: {fname} (by {img['author']})")
-                time.sleep(0.3)
-            except Exception as e:
-                logging.warning(f"Download {img['illust_id']} failed: {e}")
-
+        # Step 4: Export cookies for requests-based download
+        cookies = context.cookies()
         browser.close()
-        logging.info(f"Downloaded {len(downloaded)} images total")
-        return downloaded
+
+        logging.info(f"Collected {len(image_urls)} image URLs and {len(cookies)} cookies")
+        return image_urls, cookies
+
+
+def download_images(image_urls, cookies):
+    """Download images using requests with Playwright cookies."""
+    os.makedirs(IMAGES_DIR, exist_ok=True)
+    for f in os.listdir(IMAGES_DIR):
+        os.remove(os.path.join(IMAGES_DIR, f))
+
+    session = requests.Session()
+    # Add cookies to session
+    for c in cookies:
+        session.cookies.set(c["name"], c["value"], domain=c.get("domain", ""))
+
+    session.headers.update({
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+        "Referer": "https://www.pixiv.net/",
+    })
+
+    downloaded = []
+    for img in image_urls:
+        fname = f"{img['illust_id']}.{img['url'].split('.')[-1].split('?')[0]}"
+        fpath = os.path.join(IMAGES_DIR, fname)
+        try:
+            r = session.get(img["url"], timeout=30, stream=True)
+            r.raise_for_status()
+            with open(fpath, "wb") as f:
+                for chunk in r.iter_content(8192):
+                    f.write(chunk)
+            downloaded.append(fpath)
+            logging.info(f"Downloaded: {fname} (by {img['author']})")
+            time.sleep(0.3)
+        except Exception as e:
+            logging.warning(f"Download {img['illust_id']} failed: {e}")
+
+    logging.info(f"Downloaded {len(downloaded)} images total")
+    return downloaded
 
 
 def create_zip(files):
@@ -185,10 +180,15 @@ def send_email(zip_path):
 
 def main():
     logging.info("=" * 50)
-    logging.info("Pixiv Daily (cloud v3 - Playwright) starting")
+    logging.info("Pixiv Daily (cloud v4 - Playwright + requests) starting")
 
     try:
-        files = login_and_get_images()
+        image_urls, cookies = login_and_get_image_list()
+        if not image_urls:
+            logging.error("No image URLs collected")
+            sys.exit(1)
+
+        files = download_images(image_urls, cookies)
         if not files:
             logging.error("No images downloaded")
             sys.exit(1)
