@@ -30,6 +30,6 @@ jobs:
           GMAIL_SENDER: ${{ secrets.GMAIL_SENDER }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           GMAIL_RECEIVER: ${{ secrets.GMAIL_RECEIVER }}
-          SEARCH_TAGS: "large_breasts rating:s"
-          MIN_SCORE: "50"
+          SEARCH_TAGS: "large_breasts"
+          MIN_SCORE: "0"
         run: python pixiv_daily_cloud.py
