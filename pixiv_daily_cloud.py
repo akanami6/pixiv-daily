@@ -28,35 +28,30 @@ logging.basicConfig(
 
 IMAGE_COUNT = 10
 IMAGES_DIR = "/tmp/anime_images"
-SEARCH_TAGS = os.environ.get("SEARCH_TAGS", "large_breasts")
-MIN_SCORE = int(os.environ.get("MIN_SCORE", "0"))
+# Two tag sets: 5 images each
+TAG_SETS = [
+    ("large_breasts", 5, "巨乳大姐姐"),
+    ("barefoot", 5, "美足"),
+]
 USER_AGENT = "AnimeDaily/1.0 (GitHub Actions)"
 
 
-def fetch_posts():
-    """Fetch from yande.re or konachan (no auth needed)."""
-    tag_string = SEARCH_TAGS
-    limit = 100  # fetch more, then random select
-
-    # Try yande.re first
-    url = f"https://yande.re/post.json?tags={quote(tag_string)}&limit={limit}"
-    logging.info(f"Trying yande.re: {tag_string}")
+def fetch_posts(tags):
+    """Fetch posts for one tag set from yande.re (no auth needed)."""
+    limit = 100
+    url = f"https://yande.re/post.json?tags={quote(tags)}&limit={limit}"
+    logging.info(f"Fetching yande.re: {tags}")
     r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=30)
 
     if r.status_code != 200:
+        url = f"https://konachan.net/post.json?tags={quote(tags)}&limit={limit}"
         logging.warning(f"yande.re: {r.status_code}, trying konachan.net...")
-        url = f"https://konachan.net/post.json?tags={quote(tag_string)}&limit={limit}"
-        r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=30)
-
-    if r.status_code != 200:
-        logging.warning(f"konachan.net: {r.status_code}, trying lolibooru...")
-        url = f"https://lolibooru.moe/post.json?tags={quote(tag_string)}&limit={limit}"
         r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=30)
 
     r.raise_for_status()
     posts = r.json()
     random.shuffle(posts)
-    logging.info(f"Got {len(posts)} posts from {r.url}, shuffled")
+    logging.info(f"  Got {len(posts)} posts, shuffled")
     return posts
 
 
@@ -112,26 +107,29 @@ def create_zip(files):
     return zip_path
 
 
-def send_email(zip_path):
+def send_email(zip_paths, labels):
     sender = os.environ["GMAIL_SENDER"].encode("ascii", errors="ignore").decode()
     pwd = os.environ["GMAIL_APP_PASSWORD"].encode("ascii", errors="ignore").decode()
     receiver = os.environ.get("GMAIL_RECEIVER", sender).encode("ascii", errors="ignore").decode()
     today = datetime.now().strftime("%Y年%m月%d日")
 
+    tag_names = " + ".join(labels)
     msg = MIMEMultipart(policy=email.policy.SMTP)
     msg["From"] = sender
     msg["To"] = receiver
-    msg["Subject"] = f"[Anime Daily] {today} {SEARCH_TAGS} 图包"
+    msg["Subject"] = f"[Anime Daily] {today} {tag_names} 图包"
 
-    body = f"今日({today})「{SEARCH_TAGS}」高分热门插画已打包。\n\nGitHub Actions 自动发送。"
+    body = f"今日({today}) 两组图包：{'、'.join(labels)}\n\nGitHub Actions 自动发送。"
     msg.attach(MIMEText(body, "plain", "utf-8"))
 
-    with open(zip_path, "rb") as f:
-        part = MIMEBase("application", "zip")
-        part.set_payload(f.read())
-    encoders.encode_base64(part)
-    part.add_header("Content-Disposition", "attachment", filename=os.path.basename(zip_path))
-    msg.attach(part)
+    for zip_path, label in zip(zip_paths, labels):
+        with open(zip_path, "rb") as f:
+            part = MIMEBase("application", "zip")
+            part.set_payload(f.read())
+        encoders.encode_base64(part)
+        fname = f"{label}_{os.path.basename(zip_path)}"
+        part.add_header("Content-Disposition", "attachment", filename=fname)
+        msg.attach(part)
 
     with smtplib.SMTP("smtp.gmail.com", 587, timeout=30) as srv:
         srv.ehlo()
@@ -139,26 +137,35 @@ def send_email(zip_path):
         srv.ehlo()
         srv.login(sender, pwd)
         srv.send_message(msg)
-    logging.info(f"Email sent to {receiver}")
+    logging.info(f"Email sent to {receiver} with {len(zip_paths)} attachments")
 
 
 def main():
     logging.info("=" * 50)
-    logging.info(f"Anime Daily starting — tags: {SEARCH_TAGS}")
+    logging.info(f"Anime Daily starting — {len(TAG_SETS)} tag sets")
 
     try:
-        posts = fetch_posts()
-        if not posts:
-            logging.error("No posts found")
+        zip_paths = []
+        labels = []
+        for tags, count, label in TAG_SETS:
+            logging.info(f"--- Set: {label} ({tags}) ---")
+            posts = fetch_posts(tags)
+            if not posts:
+                logging.warning(f"No posts for {label}, skipping")
+                continue
+            files = download_images(posts[:count])
+            if not files:
+                logging.warning(f"No downloads for {label}, skipping")
+                continue
+            zip_path = create_zip(files)
+            zip_paths.append(zip_path)
+            labels.append(label)
+
+        if not zip_paths:
+            logging.error("No images collected for any tag set")
             sys.exit(1)
 
-        files = download_images(posts)
-        if not files:
-            logging.error("No images downloaded")
-            sys.exit(1)
-
-        zip_path = create_zip(files)
-        send_email(zip_path)
+        send_email(zip_paths, labels)
         logging.info("Anime Daily finished successfully")
     except Exception as e:
         logging.error(f"Fatal error: {e}")
