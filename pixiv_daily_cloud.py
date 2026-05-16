@@ -152,7 +152,7 @@ def create_zip(files):
 def send_email(zip_path):
     sender = os.environ["GMAIL_SENDER"].encode("ascii", errors="ignore").decode()
     pwd = os.environ["GMAIL_APP_PASSWORD"].encode("ascii", errors="ignore").decode()
-    receiver = os.environ.get("GMAIL_RECEIVER", sender)
+    receiver = os.environ.get("GMAIL_RECEIVER", sender).encode("ascii", errors="ignore").decode()
     today = datetime.now().strftime("%Y年%m月%d日")
 
     msg = MIMEMultipart(policy=email.policy.SMTP)
