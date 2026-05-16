@@ -3,3 +3,14 @@ config.json
 *.log
 *.zip
 __pycache__/
+ro_g_works/
+ro_g_parts/
+ro_g_parts_smart/
+*.jpg
+*.png
+payload.json
+payload2.json
+fetch_artist.py
+fetch_rog_all.py
+split_send.py
+ro_g_urls.json
