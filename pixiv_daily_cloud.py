@@ -37,22 +37,23 @@ USER_AGENT = "AnimeDaily/1.0 (GitHub Actions)"
 
 
 def fetch_posts(tags):
-    """Fetch posts for one tag set from yande.re (no auth needed)."""
+    """Fetch posts for one tag set from yande.re with retry."""
     limit = 100
-    url = f"https://yande.re/post.json?tags={quote(tags)}&limit={limit}"
-    logging.info(f"Fetching yande.re: {tags}")
-    r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=30)
-
-    if r.status_code != 200:
-        url = f"https://konachan.net/post.json?tags={quote(tags)}&limit={limit}"
-        logging.warning(f"yande.re: {r.status_code}, trying konachan.net...")
-        r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=30)
-
-    r.raise_for_status()
-    posts = r.json()
-    random.shuffle(posts)
-    logging.info(f"  Got {len(posts)} posts, shuffled")
-    return posts
+    for attempt in range(3):
+        try:
+            url = f"https://yande.re/post.json?tags={quote(tags)}&limit={limit}"
+            logging.info(f"Fetching yande.re: {tags}")
+            r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=30)
+            r.raise_for_status()
+            posts = r.json()
+            random.shuffle(posts)
+            logging.info(f"  Got {len(posts)} posts")
+            return posts
+        except Exception as e:
+            logging.warning(f"  Attempt {attempt+1}/3 failed: {e}")
+            time.sleep(2)
+    logging.error(f"All attempts failed for {tags}")
+    return []
 
 
 def download_images(posts):
@@ -147,8 +148,10 @@ def main():
     try:
         zip_paths = []
         labels = []
-        for tags, count, label in TAG_SETS:
+        for i, (tags, count, label) in enumerate(TAG_SETS):
             logging.info(f"--- Set: {label} ({tags}) ---")
+            if i > 0:
+                time.sleep(3)  # avoid rate limiting
             posts = fetch_posts(tags)
             if not posts:
                 logging.warning(f"No posts for {label}, skipping")
