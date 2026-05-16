@@ -76,26 +76,26 @@ def login_and_get_image_list():
 
         # Step 2: Fetch multiple pages of search results, then shuffle
         all_illusts = []
-        for page in range(1, 4):  # fetch 3 pages × 60 = ~180 candidates
+        for p in range(1, 4):  # fetch 3 pages × 60 = ~180 candidates
             search_url = (
                 f"https://www.pixiv.net/ajax/search/illustrations/{encoded}"
                 f"?word={encoded}&order={SEARCH_ORDER}&mode={SEARCH_MODE}"
-                f"&p={page}&s_mode=s_tag_full&type=illust&lang=zh"
+                f"&p={p}&s_mode=s_tag_full&type=illust&lang=zh"
             )
-            logging.info(f"Searching page {page}: {tags}")
+            logging.info(f"Searching page {p}: {tags}")
             page.goto(search_url, wait_until="domcontentloaded")
             page.wait_for_timeout(1500)
 
             body = page.evaluate("() => document.body.innerText")
             data = json.loads(body)
             if data.get("error"):
-                logging.warning(f"Search page {page} error: {data}")
+                logging.warning(f"Search page {p} error: {data}")
                 break
             page_data = data.get("body", {}).get("illust", {}).get("data", [])
             if not page_data:
                 break
             all_illusts.extend(page_data)
-            logging.info(f"  Page {page}: {len(page_data)} results (total: {len(all_illusts)})")
+            logging.info(f"  Page {p}: {len(page_data)} results (total: {len(all_illusts)})")
 
         logging.info(f"Total search results: {len(all_illusts)}")
         # Random shuffle for variety
