@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Danbooru Daily — fetch high-score anime images, zip and email via GitHub Actions.
+Anime Daily — fetch images from Konachan/Danbooru, zip and email via GitHub Actions.
 No login required. Pure HTTP API.
 """
 import os
@@ -17,6 +17,7 @@ from email.mime.base import MIMEBase
 from email.mime.text import MIMEText
 from email import encoders
 from datetime import datetime
+from urllib.parse import quote
 
 import requests
 
@@ -26,29 +27,33 @@ logging.basicConfig(
 )
 
 IMAGE_COUNT = 10
-IMAGES_DIR = "/tmp/danbooru_images"
-SEARCH_TAGS = os.environ.get("SEARCH_TAGS", "large_breasts rating:s")
-MIN_SCORE = int(os.environ.get("MIN_SCORE", "50"))
-API_BASE = "https://danbooru.donmai.us"
-USER_AGENT = "DanbooruDaily/1.0 (GitHub Actions; automated fetching)"
+IMAGES_DIR = "/tmp/anime_images"
+SEARCH_TAGS = os.environ.get("SEARCH_TAGS", "large_breasts")
+MIN_SCORE = int(os.environ.get("MIN_SCORE", "0"))
+USER_AGENT = "AnimeDaily/1.0 (GitHub Actions)"
 
 
 def fetch_posts():
-    """Fetch posts from Danbooru API. No auth needed."""
-    from urllib.parse import quote
+    """Fetch from Konachan first, fallback to Danbooru."""
     tag_string = f"{SEARCH_TAGS} order:random"
-    # Build URL manually to avoid double-encoding of : and >
-    url = f"{API_BASE}/posts.json?tags={quote(tag_string)}&limit=100"
-    logging.info(f"Fetching: {tag_string}")
+    url = f"https://konachan.com/post.json?tags={quote(tag_string)}&limit={IMAGE_COUNT*3}"
+
+    logging.info(f"Fetching Konachan: {tag_string}")
     r = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=30)
-    r.raise_for_status()
+
+    if r.status_code != 200:
+        logging.warning(f"Konachan failed ({r.status_code}), trying Danbooru...")
+        url = f"https://danbooru.donmai.us/posts.json?tags={quote(tag_string)}&limit={IMAGE_COUNT*3}"
+        r = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=30)
+        r.raise_for_status()
+
     posts = r.json()
     logging.info(f"Got {len(posts)} posts")
     return posts
 
 
 def download_images(posts):
-    """Download images from Danbooru CDN."""
+    """Download images from CDN."""
     os.makedirs(IMAGES_DIR, exist_ok=True)
     for f in os.listdir(IMAGES_DIR):
         os.remove(os.path.join(IMAGES_DIR, f))
@@ -58,18 +63,16 @@ def download_images(posts):
         if len(downloaded) >= IMAGE_COUNT:
             break
 
-        # Use sample for speed, fallback to original
-        url = post.get("large_file_url") or post.get("file_url")
+        # Konachan uses 'file_url' or 'jpeg_url', Danbooru uses 'large_file_url'/'file_url'
+        url = (post.get("file_url") or post.get("jpeg_url") or
+               post.get("large_file_url") or "")
         if not url:
             continue
-        if url.startswith("/"):
-            url = "https://danbooru.donmai.us" + url
 
         ext = url.split(".")[-1].split("?")[0]
-        iid = post["id"]
-        fname = f"danbooru_{iid}.{ext}"
+        pid = post.get("id", "0")
+        fname = f"anime_{pid}.{ext}"
         fpath = os.path.join(IMAGES_DIR, fname)
-
         try:
             r = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=30, stream=True)
             r.raise_for_status()
@@ -77,16 +80,12 @@ def download_images(posts):
                 for chunk in r.iter_content(8192):
                     f.write(chunk)
             downloaded.append(fpath)
-            artist = post.get("tag_string_artist", "unknown")
-            chars = post.get("tag_string_character", "")
             score = post.get("score", 0)
-            info = f"score:{score}"
-            if chars:
-                info += f" char:{chars}"
-            logging.info(f"Downloaded: {fname} by {artist} ({info})")
+            tags = post.get("tags", post.get("tag_string", ""))
+            logging.info(f"Downloaded: {fname} (score:{score})")
             time.sleep(0.3)
         except Exception as e:
-            logging.warning(f"Download {iid} failed: {e}")
+            logging.warning(f"Download {pid} failed: {e}")
             continue
 
     logging.info(f"Downloaded {len(downloaded)} images total")
@@ -95,7 +94,7 @@ def download_images(posts):
 
 def create_zip(files):
     today = datetime.now().strftime("%Y-%m-%d")
-    zip_name = f"danbooru_daily_{today}.zip"
+    zip_name = f"anime_daily_{today}.zip"
     zip_path = f"/tmp/{zip_name}"
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
         for f in files:
@@ -114,9 +113,9 @@ def send_email(zip_path):
     msg = MIMEMultipart(policy=email.policy.SMTP)
     msg["From"] = sender
     msg["To"] = receiver
-    msg["Subject"] = f"[Danbooru Daily] {today} {SEARCH_TAGS} 图包"
+    msg["Subject"] = f"[Anime Daily] {today} {SEARCH_TAGS} 图包"
 
-    body = f"今日({today}) Danbooru「{SEARCH_TAGS}」高分热门插画已打包。\n\nGitHub Actions 自动发送。"
+    body = f"今日({today})「{SEARCH_TAGS}」高分热门插画已打包。\n\nGitHub Actions 自动发送。"
     msg.attach(MIMEText(body, "plain", "utf-8"))
 
     with open(zip_path, "rb") as f:
@@ -137,7 +136,7 @@ def send_email(zip_path):
 
 def main():
     logging.info("=" * 50)
-    logging.info(f"Danbooru Daily starting — tags: {SEARCH_TAGS}")
+    logging.info(f"Anime Daily starting — tags: {SEARCH_TAGS}")
 
     try:
         posts = fetch_posts()
@@ -152,7 +151,7 @@ def main():
 
         zip_path = create_zip(files)
         send_email(zip_path)
-        logging.info("Danbooru Daily finished successfully")
+        logging.info("Anime Daily finished successfully")
     except Exception as e:
         logging.error(f"Fatal error: {e}")
         raise
