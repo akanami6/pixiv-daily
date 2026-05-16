@@ -1,4 +1,4 @@
-name: Pixiv Daily Anime Images to Email
+name: Danbooru Daily Anime Images to Email
 
 on:
   schedule:
@@ -9,9 +9,9 @@ on:
     branches: [master]
 
 jobs:
-  pixiv-daily:
+  danbooru-daily:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 10
 
     steps:
       - name: Checkout
@@ -22,20 +22,14 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install Python dependencies
-        run: pip install playwright requests
+      - name: Install dependencies
+        run: pip install requests
 
-      - name: Install Chromium
-        run: playwright install chromium --with-deps
-
-      - name: Run Pixiv Daily
+      - name: Run Danbooru Daily
         env:
-          PIXIV_USERNAME: ${{ secrets.PIXIV_USERNAME }}
-          PIXIV_PASSWORD: ${{ secrets.PIXIV_PASSWORD }}
           GMAIL_SENDER: ${{ secrets.GMAIL_SENDER }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           GMAIL_RECEIVER: ${{ secrets.GMAIL_RECEIVER }}
-          SEARCH_TAGS: "巨乳 R-18"
-          SEARCH_ORDER: "popular_d"
-          SEARCH_MODE: "r18"
+          SEARCH_TAGS: "large_breasts rating:s"
+          MIN_SCORE: "50"
         run: python pixiv_daily_cloud.py
