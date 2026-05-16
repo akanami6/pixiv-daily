@@ -11,6 +11,7 @@ import zipfile
 import logging
 import smtplib
 import time
+import email.policy
 from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
 from email.mime.text import MIMEText
@@ -154,7 +155,7 @@ def send_email(zip_path):
     receiver = os.environ.get("GMAIL_RECEIVER", sender)
     today = datetime.now().strftime("%Y年%m月%d日")
 
-    msg = MIMEMultipart()
+    msg = MIMEMultipart(policy=email.policy.SMTP)
     msg["From"] = sender
     msg["To"] = receiver
     msg["Subject"] = f"[Pixiv Daily] {today} 二次元美少女图包"
