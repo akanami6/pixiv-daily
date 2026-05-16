@@ -150,7 +150,7 @@ def create_zip(files):
 
 def send_email(zip_path):
     sender = os.environ["GMAIL_SENDER"]
-    pwd = os.environ["GMAIL_APP_PASSWORD"]
+    pwd = os.environ["GMAIL_APP_PASSWORD"].lstrip("﻿").strip()
     receiver = os.environ.get("GMAIL_RECEIVER", sender)
     today = datetime.now().strftime("%Y年%m月%d日")
 
